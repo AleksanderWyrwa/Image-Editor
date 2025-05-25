@@ -8,12 +8,14 @@ import numpy as np
 import tempfile
 import os
 from Watermark import Water  
+from crop_tool import CropTool
 from histogram import HistogramViewer
 from io import BytesIO
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.pyplot as plt
 from resize_utils import ask_resize, batch_resize_images
 from siec_osoby import run_detection
+import pygame
 
 undo_stack = []
 redo_stack = []
@@ -475,7 +477,123 @@ def detect_people():
     ttk.Button(class_dialog, 
               text="Wykryj", 
               command=run_detection_with_class).pack(pady=10)
+# --- Dodatki ---
+def invert_collor():
+    global edge, img, image_id
+    if edge is None:
+        return
+    push_undo(edge)
+    arr = np.array(edge)
+    inverted = cv2.bitwise_not(arr)
+    edge = Image.fromarray(inverted)
+    img = ImageTk.PhotoImage(edge)
+    canvas.itemconfig(image_id, image=img)
+    if show_hist.get():
+        update_histogram()
 
+def rotate():
+    global edge, img, image_id
+    if edge is None:
+        return
+    push_undo(edge)
+    arr = np.array(edge)
+    rotated = cv2.rotate(arr, cv2.ROTATE_90_CLOCKWISE)
+    edge = Image.fromarray(rotated)
+    img = ImageTk.PhotoImage(edge)
+    canvas.itemconfig(image_id, image=img)
+    if show_hist.get():
+        update_histogram()
+
+def add_noise():
+    global edge, img, image_id
+    if edge is None:
+        return
+    push_undo(edge)
+    arr = np.array(edge)
+    noise = np.random.randint(0, 256, arr.shape, dtype=np.uint8)
+    noisy_img = cv2.addWeighted(arr, 0.5, noise, 0.5, 0)
+    edge = Image.fromarray(noisy_img)
+    img = ImageTk.PhotoImage(edge)
+    canvas.itemconfig(image_id, image=img)
+    if show_hist.get():
+        update_histogram()
+
+def rmove_noise():
+    global edge, img, image_id
+    if edge is None:
+        return
+    push_undo(edge)
+    arr = np.array(edge)
+    denoised = cv2.fastNlMeansDenoisingColored(arr, None, 10, 10, 7, 21)
+    edge = Image.fromarray(denoised)
+    img = ImageTk.PhotoImage(edge)
+    canvas.itemconfig(image_id, image=img)
+    if show_hist.get():
+        update_histogram()
+def deformer():
+    global edge, img, image_id
+    if edge is None:
+        return
+    push_undo(edge)
+    arr = np.array(edge)
+    rows, cols = arr.shape[:2]
+
+    # Twisting deformation using sinusoidal wave
+    deformed = np.zeros_like(arr)
+    for i in range(rows):
+        offset = int(20.0 * np.sin(2 * np.pi * i / 150))  # amplitude=20, period=150
+        if arr.ndim == 2:
+            deformed[i, :] = np.roll(arr[i, :], offset)
+        else:
+            deformed[i, :, :] = np.roll(arr[i, :, :], offset, axis=0)
+
+    edge = Image.fromarray(deformed)
+    img = ImageTk.PhotoImage(edge)
+    canvas.itemconfig(image_id, image=img)
+    if show_hist.get():
+        update_histogram()
+
+def pixelate_image(pil_img, pixel_size=10):
+    """Pixelates the image by averaging blocks of pixels."""
+    arr = np.array(pil_img)
+    h, w = arr.shape[:2]
+    for i in range(0, h, pixel_size):
+        for j in range(0, w, pixel_size):
+            block = arr[i:i+pixel_size, j:j+pixel_size]
+            avg_color = block.mean(axis=(0, 1), dtype=int)
+            arr[i:i+pixel_size, j:j+pixel_size] = avg_color
+    return Image.fromarray(arr)
+def play_music():
+    """Plays background music."""
+    try:
+        import pygame
+        pygame.mixer.init()
+        pygame.mixer.music.load("background_music.mp3")
+        pygame.mixer.music.play(-1)  # -1 means loop indefinitely
+    except Exception as e:
+        messagebox.showerror("Błąd", f"Nie można odtworzyć muzyki: {e}")
+def stop_music():
+    """Stops the background music."""
+    try:
+        pygame.mixer.music.stop()
+    except Exception as e:
+        messagebox.showerror("Błąd", f"Nie można zatrzymać muzyki: {e}")
+    
+def crop_image():
+    global edge, img, image_id
+    if edge is None:
+        return
+    push_undo(edge)
+    CropTool(canvas, edge, update_image)
+
+def update_image(new_img):
+    global edge, img, image_id
+    edge = new_img
+    img = ImageTk.PhotoImage(edge)
+    canvas.itemconfig(image_id, image=img)
+    if show_hist.get():
+        update_histogram()
+        
 # --- MENU ---
 menubar = Menu(root)
 root.config(menu=menubar)
@@ -492,6 +610,7 @@ edit_menu.add_command(label="Batch Resize Images", command=batch_resize_images)
 edit_menu.add_separator()
 edit_menu.add_command(label="Undo", command=undo)
 edit_menu.add_command(label="Redo", command=redo)
+edit_menu.add_command(label="Crop", command=crop_image)
 menubar.add_cascade(label="Edit", menu=edit_menu)
 
 edge_menu = Menu(menubar, tearoff=0)
@@ -518,6 +637,18 @@ menubar.add_cascade(label="Histogram", menu=hist_menu)
 detect_menu = Menu(menubar, tearoff=0)
 detect_menu.add_command(label="Neural Detection", command=detect_people)
 menubar.add_cascade(label="Neural Network", menu=detect_menu)
+
+other_menu = Menu(menubar, tearoff=0)
+other_menu.add_command(label="Invert Colors", command=invert_collor)
+other_menu.add_command(label="Rotate Image", command=rotate)
+other_menu.add_command(label="Add Noise", command=add_noise)
+other_menu.add_command(label="Remove Noise", command=rmove_noise)
+other_menu.add_command(label="Deform Image", command=deformer)
+other_menu.add_command(label="Pixelate Image", command=lambda: update_displayed_image(pixelate_image(edge, pixel_size=10)))
+other_menu.add_command(label="Play Background Music", command=play_music)
+other_menu.add_command(label="Stop Background Music", command=stop_music)
+menubar.add_cascade(label="Other", menu=other_menu)
+
 root.bind_all("<Control-z>", lambda event: undo())
 root.bind_all("<Control-y>", lambda event: redo())
 root.mainloop()
